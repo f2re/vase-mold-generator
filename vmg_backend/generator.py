@@ -10,9 +10,11 @@ import subprocess
 import tempfile
 import time
 from . import VERSION
+from .quality import audit
+from .resolution import tolerance, segments, report as resolution_report
 from .stl import ModelError, parse, clean, info, bounds, signed_volume, transform, write_binary, hull_xy, ray_hits, draft_report
 
-DEFAULTS = dict(kind='box',footprint='hull',units='mm',scale=1,rx=0,ry=0,rz=0,
+DEFAULTS = dict(detail='standard',chordTolerance=.03,kind='box',footprint='hull',units='mm',scale=1,rx=0,ry=0,rz=0,
     clearance=10,wall=3,base=4,headroom=8,padding=10,splitAxis='x',splitPercent=50,
     keyDiameter=5,keyLength=3,keyClearance=.25,sprueDiameter=8,ventDiameter=2,
     sprueX=None,sprueY=None,vents=[],printerX=180,printerY=180,printerZ=180,xyMargin=2,zMargin=5)
@@ -24,6 +26,7 @@ RANGES = dict(scale=(.001,1000),rx=(-360,360),ry=(-360,360),rz=(-360,360),cleara
 def parameters(raw):
     if not isinstance(raw,dict):raise ModelError('Параметры должны быть объектом.')
     p={**DEFAULTS,**{k:v for k,v in raw.items() if k in DEFAULTS}}
+    tolerance(p)
     for k,(lo,hi) in RANGES.items():
         v=p[k]
         if isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or not lo<=v<=hi:
@@ -34,6 +37,7 @@ def parameters(raw):
     if p['sprueX'] is not None:point([p['sprueX'],p['sprueY']])
     if not isinstance(p['vents'],list) or len(p['vents'])>8:raise ModelError('Допустимо до 8 отдушин.')
     p['vents']=[point(v) for v in p['vents']]
+    if len({tuple(v) for v in p['vents']})!=len(p['vents']):raise ModelError('Повторные точки отдушин. Удалите дубли.')
     if p['keyDiameter']+2>p['padding']:raise ModelError('Увеличьте припуск формы: штифты не помещаются в поле разъёма.')
     return p
 
@@ -62,11 +66,12 @@ J=lambda x:json.dumps(x,separators=(',',':'),allow_nan=False)
 def cube(lo,hi):
     return f'translate({J(lo)}) cube({J([hi[i]-lo[i] for i in range(3)])});'
 
-def cylinder_at(pos,axis,h,r,r2=None):
+def cylinder_at(pos,axis,h,r,r2=None,error=.03):
+    n = segments(max(r,r2 or r),error)
     rot=[[0,90,0],[-90,0,0],[0,0,0]][axis]
-    return f'translate({J(pos)}) rotate({J(rot)}) cylinder(h={h},r1={r},r2={r if r2 is None else r2},$fn=32);'
+    return f'translate({J(pos)}) rotate({J(rot)}) cylinder(h={h},r1={r},r2={r if r2 is None else r2},$fn={n});'
 
-def prepare(data,raw):
+def prepare(data,raw, *, cancelled=lambda:False):
     p=parameters(raw);mesh=parse(data);mesh=transform(mesh,p);mesh,removed=clean(mesh);report=info(mesh)
     warnings=[]
     if removed:warnings.append(f'Удалено вырожденных или повторных граней: {removed}. Координаты сшиты с точностью 0,00001 мм.')
@@ -79,13 +84,19 @@ def prepare(data,raw):
         if p['kind']=='negative':raise ModelError('Негатив поддерживает одну связанную оболочку. Разделите сборку/закрытые внутренние полости на отдельные задания.')
         warnings.append(f"Оболочек в STL: {report['components']}. Фиксацию всех частей и внутренних полостей нужно предусмотреть отдельно.")
     if report['watertight'] and report['volumeMm3']<.01:raise ModelError('Замкнутая сетка имеет нулевой объём.')
+    report.update(audit(mesh, cancelled=cancelled))
+    if cancelled():raise ModelError('Расчёт отменён.')
+    if p['kind']=='negative' and not report['geometryChecked']:
+        raise ModelError('STL не прошёл геометрическую проверку: самопересечения, дефектная топология или неполная проверка. Упростите/исправьте сетку.')
+    if p['kind']=='box' and not report['geometryChecked']:
+        warnings.append('Геометрическая проверка мастера не пройдена полностью. Создаётся только опалубка; вычисление объёма силикона отключено.')
     return mesh,p,report,warnings
 
 def design_box(mesh,p,report):
     b=report['bounds'];W,D,H=b['size'];gap=p['clearance'];wall=p['wall'];base=p['base'];height=H+p['headroom']
     if p['footprint']=='hull':foot=f'polygon({J(hull_xy(mesh))});'
     else:foot=f'translate([{b["min"][0]},{b["min"][1]}]) square([{W},{D}]);'
-    common=f'$fn=48; module footprint(d=0) {{ offset(r=d) {{ {foot} }} }}\n'
+    common=f'$fn={segments(gap+wall+3,tolerance(p))}; module footprint(d=0) {{ offset(r=d) {{ {foot} }} }}\n'
     common+=f'module prism(d,z,h) {{ translate([0,0,z]) linear_extrude(height=h,convexity=10) footprint(d); }}\n'
     # Base outside guide: 0.25 mm radial clearance, no lip inside silicone space.
     base_code=f'union() {{ prism({gap+wall+3},0,{base}); difference() {{ prism({gap+wall+3},{base-.1},2.1); prism({gap+wall+.25},{base-.2},2.4); }} }}'
@@ -101,7 +112,7 @@ def design_box(mesh,p,report):
             body=f'intersection() {{ difference() {{ prism({gap+wall},{z},{span}); prism({gap},{z-.1},{span+.2}); }} {cube(lo,hi)} }}'
             parts.append((f'stl-wall-{t+1}-{side+1}',f'Стенка {t+1}.{side+1}','shell',body,[(1 if side else -1)*(W*.65+gap),0,t*span*.35], 'Две половины по X. Плоские стыки ярусов требуют наружных стяжек и герметизации.'))
     moved=[[[v[0],v[1],v[2]+base] for v in t] for t in mesh]
-    if report['watertight']:
+    if report.get('geometryChecked'):
         skin=f'difference() {{ prism({gap},{base},{height}); translate([0,0,{base}]) import("model.stl",convexity=10); }}'
         parts.append(('stl-silicone','Расчётный объём силикона','silicone',skin,[0,max(W,D)+2*gap,0], 'Геометрический объём, не симуляция заливки. Дно мастера касается основания; воздух и доступ к полостям проверить отдельно.'))
     notes=['Мастер стоит на основании: силикон не формируется под его опорной поверхностью.',
@@ -113,7 +124,7 @@ def design_negative(mesh,p,report):
     b=report['bounds'];pad=p['padding'];lo=[v-pad for v in b['min']];hi=[v+pad for v in b['max']]
     axis='xyz'.index(p['splitAxis']);uv=[i for i in range(3) if i!=axis]
     split=b['min'][axis]+b['size'][axis]*p['splitPercent']/100
-    common='$fn=40; module master() { import("model.stl",convexity=10); }\n'
+    common='$fn=64; module master() { import("model.stl",convexity=10); }\n'
     highest=max(mesh,key=lambda t:sum(v[2] for v in t))
     x,y=(p['sprueX'],p['sprueY']) if p['sprueX'] is not None else [sum(v[i] for v in highest)/3 for i in (0,1)]
     channels=[];actual=[]
@@ -125,8 +136,8 @@ def design_negative(mesh,p,report):
         funnel=r*1.55 if i==0 else r
         if any(xy[j]-funnel<lo[j]+1 or xy[j]+funnel>hi[j]-1 for j in range(2)):
             raise ModelError('Канал слишком близко к наружному краю. Увеличьте припуск или переместите точку.')
-        z=hits[-1];channels.append(cylinder_at([*xy,z-.25],2,hi[2]-z+.6,r))
-        if i==0:channels.append(cylinder_at([*xy,hi[2]-min(4,pad/2)],2,min(4,pad/2)+.2,r,funnel))
+        z=hits[-1];channels.append(cylinder_at([*xy,z-.25],2,hi[2]-z+.6,r,error=tolerance(p)))
+        if i==0:channels.append(cylinder_at([*xy,hi[2]-min(4,pad/2)],2,min(4,pad/2)+.2,r,funnel,error=tolerance(p)))
         actual.append({'x':xy[0],'y':xy[1],'z':z,'diameter':r*2,'kind':'sprue' if i==0 else 'vent'})
     common+='module channels() { union() {'+'\n'.join(channels)+'} }\n'
     keys=[];holes=[]
@@ -136,8 +147,8 @@ def design_negative(mesh,p,report):
         pos[uv[0]]= (hi[uv[0]]-pad*.5) if su else (lo[uv[0]]+pad*.5)
         pos[uv[1]]= (hi[uv[1]]-pad*.5) if sv else (lo[uv[1]]+pad*.5)
         if i==3:pos[uv[0]]-=pad*.15 # asymmetric registry
-        keys.append(cylinder_at(pos,axis,p['keyLength']+.15,p['keyDiameter']/2,p['keyDiameter']/2-.35))
-        holes.append(cylinder_at(pos,axis,p['keyLength']+.15+p['keyClearance'],p['keyDiameter']/2+p['keyClearance'],p['keyDiameter']/2-.35+p['keyClearance']))
+        keys.append(cylinder_at(pos,axis,p['keyLength']+.15,p['keyDiameter']/2,p['keyDiameter']/2-.35,error=tolerance(p)))
+        holes.append(cylinder_at(pos,axis,p['keyLength']+.15+p['keyClearance'],p['keyDiameter']/2+p['keyClearance'],p['keyDiameter']/2-.35+p['keyClearance'],error=tolerance(p)))
     a_hi=hi.copy();a_hi[axis]=split;b_lo=lo.copy();b_lo[axis]=split
     first='difference() { union() { '+cube(lo,a_hi)+' '.join(keys)+'} master(); channels(); }'
     second='difference() { '+cube(b_lo,hi)+' master(); channels(); '+' '.join(holes)+'}'
@@ -155,7 +166,7 @@ def generate(data,raw, *, progress=lambda *args:None, cancelled=lambda:False, ti
     start=time.monotonic();exe=executable or openscad_path()
     if not exe:raise ModelError('OpenSCAD не найден. Установите его и перезапустите сервер; либо задайте VMG_OPENSCAD.')
     progress('Проверка STL',5)
-    mesh,p,report,warnings=prepare(data,raw)
+    mesh,p,report,warnings=prepare(data,raw,cancelled=cancelled)
     common,specs,reference,notes,split=design_box(mesh,p,report) if p['kind']=='box' else design_negative(mesh,p,report)
     parts=[];total_facets=0;silicone_ml=None
     safe=[p['printerX']-2*p['xyMargin'],p['printerY']-2*p['xyMargin'],p['printerZ']-p['zMargin']]
@@ -194,6 +205,10 @@ def generate(data,raw, *, progress=lambda *args:None, cancelled=lambda:False, ti
             # Preserve CSG's shared vertices and thin valid faces: re-welding output
             # can collapse a legitimate sliver and open an otherwise closed boundary.
             result=parse(out.read_bytes(),max_bytes=25*1024*1024,max_triangles=300_000);quality=info(result)
+            quality.update(audit(result, cancelled=cancelled, seconds=min(10,max(.01,timeout-(time.monotonic()-start)))))
+            if cancelled():raise ModelError('Расчёт отменён.')
+            if not quality['geometryChecked']:
+                raise ModelError('Геометрическая проверка не пройдена: '+label+'. Возможны самопересечения или превышен лимит проверки. STL не выдан.')
             if not quality['watertight'] or quality['volumeMm3']<.001:
                 raise ModelError('После булевой операции осталась некорректная сетка: '+label+'. STL не выдан.')
             if quality['orientation']<0:result=[[c,b,a] for a,b,c in result]
@@ -210,4 +225,4 @@ def generate(data,raw, *, progress=lambda *args:None, cancelled=lambda:False, ti
     progress('Готово',100)
     return dict(version=VERSION,kind='stl',mode=p['kind'],p=p,d=dict(so=max(b['size'][:2])/2+p['clearance']+p['wall'],co=0),parts=parts,warnings=warnings+([split['draft']['message']] if split.get('draft') and split['draft'].get('suspect') else []),
         notes=notes,stats=dict(printCount=sum(x['printable'] for x in parts),allFit=not failures,totalMl=silicone_ml),
-        source=report,split=split,elapsedMs=round((time.monotonic()-start)*1000))
+        source=report,split=split,resolution=resolution_report(p),elapsedMs=round((time.monotonic()-start)*1000))

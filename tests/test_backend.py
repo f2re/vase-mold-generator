@@ -99,7 +99,7 @@ class APITests(unittest.TestCase):
     def test_static(self):
         s,b=self.request();self.assertEqual(s,200);self.assertIn('Загрузить STL'.encode(),b)
     def test_health(self):
-        s,b=self.request('/api/status');self.assertEqual(s,200);self.assertEqual(json.loads(b)['version'],'0.3.0')
+        s,b=self.request('/api/status');self.assertEqual(s,200);self.assertEqual(json.loads(b)['version'],'0.3.1')
     def test_host(self):self.assertEqual(self.request(headers={'Host':'evil.example'})[0],403)
     def test_origin(self):self.assertEqual(self.request('/api/status',headers={'Origin':'https://evil.example'})[0],403)
     def test_no_token(self):self.assertEqual(self.request('/api/jobs','POST','{}',{'Content-Type':'application/json'})[0],403)

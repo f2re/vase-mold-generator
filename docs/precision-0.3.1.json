@@ -1,0 +1,57 @@
+{
+  "vase": [
+    {
+      "detail": "draft",
+      "segments": 80,
+      "chordToleranceMm": 0.1,
+      "maxDeviationMm": 0.06784481081638472,
+      "sourcePreserved": true,
+      "analyticMl": 2230.923483130452,
+      "meshMl": 2228.6306141494324,
+      "triangles": 9392
+    },
+    {
+      "detail": "standard",
+      "segments": 128,
+      "chordToleranceMm": 0.03,
+      "maxDeviationMm": 0.026503954734026003,
+      "sourcePreserved": true,
+      "analyticMl": 2230.923483130452,
+      "meshMl": 2230.027662832496,
+      "triangles": 14960
+    },
+    {
+      "detail": "fine",
+      "segments": 224,
+      "chordToleranceMm": 0.01,
+      "maxDeviationMm": 0.008654645157398555,
+      "sourcePreserved": true,
+      "analyticMl": 2230.923483130452,
+      "meshMl": 2230.6309466449507,
+      "triangles": 26096
+    }
+  ],
+  "box40x20x10": [
+    {
+      "detail": "draft",
+      "exactMl": 33.654866776461624,
+      "meshMl": 33.61860258993693,
+      "errorPercent": -0.10775317212089543,
+      "faces": 596
+    },
+    {
+      "detail": "standard",
+      "exactMl": 33.654866776461624,
+      "meshMl": 33.643009374873714,
+      "errorPercent": -0.03523235336710995,
+      "faces": 980
+    },
+    {
+      "detail": "fine",
+      "exactMl": 33.654866776461624,
+      "meshMl": 33.650831035124135,
+      "errorPercent": -0.011991553448401476,
+      "faces": 1620
+    }
+  ]
+}

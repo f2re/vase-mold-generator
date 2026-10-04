@@ -25,3 +25,6 @@ body[data-source="stl"] .parameters{padding-bottom:36px}
 
 .stl-build{position:sticky;top:0;z-index:6;background:var(--panel);padding:9px 0;margin-top:4px}
 .engineering-notes{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}.engineering-notes summary{cursor:pointer;font-size:12px;color:var(--muted)}.engineering-notes p{font-size:12px;line-height:1.65;margin:9px 0;color:var(--muted);max-width:75ch}
+
+.quality-summary{font-size:12px;color:var(--muted);line-height:1.65;margin:8px 0 16px;max-width:75ch}.mesh-quality{font-variant-numeric:tabular-nums}.source-file strong{word-break:break-word}.workspace-heading>div{min-width:0}#modelCaption{overflow-wrap:anywhere}#generationState{white-space:normal;max-width:38%;text-align:right}.field:has(#segments){grid-column:1/-1}
+@media(max-width:720px){.icon-button,.segmented button,.text-button,.example-row button{min-height:44px}.source-switch button{min-height:44px}.view-toolbar{flex-wrap:wrap}.view-toolbar .canvas-actions{margin-left:auto}.check{min-height:44px}.preview .check{min-height:32px}.quality-summary{font-size:12px}}

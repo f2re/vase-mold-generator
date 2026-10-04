@@ -8,7 +8,7 @@ const lerp=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
 const STAGES={all:()=>true,outer:p=>['shell','base','master'].includes(p.type)||p.id==='silicone-outer',inner:p=>!p.sample,casting:p=>!p.sample&&p.id!=='master'};
 export class Viewer {
   constructor(canvas,{onSelect=()=>{},onMode=()=>{}}={}){
-    this.canvas=canvas;this.onSelect=onSelect;this.onMode=onMode;this.parts=[];this.hidden=new Set();this.selected=null;this.mode='explode';this.stage='all';this.explode=.58;this.slice=0;this.yaw=-1.06;this.pitch=.42;this.zoom=1;this.target=[0,0,150];this.pan=[0,0];this.reference={master:false,silicone:false,sample:false,channels:true};this.transparent=false;this.isolated=null;this.pointer=new Map();this.frame=0;this.transitions=null;this.framesDrawn=0;
+    this.canvas=canvas;this.onSelect=onSelect;this.onMode=onMode;this.parts=[];this.hidden=new Set();this.selected=null;this.mode='explode';this.stage='all';this.explode=.58;this.slice=0;this.yaw=-1.06;this.pitch=.42;this.zoom=1;this.target=[0,0,150];this.pan=[0,0];this.reference={master:false,silicone:false,sample:false,channels:true};this.transparent=false;this.isolated=null;this.pointer=new Map();this.frame=0;this.transitions=null;this.framesDrawn=0;this.showEdges=false;this.edgeCache=new Map();
     this.reduced=matchMedia('(prefers-reduced-motion: reduce)');
     try{this.gl=canvas.getContext('webgl',{alpha:false,antialias:true,preserveDrawingBuffer:true});if(this.gl)this.setupGL();}catch(e){this.gl=null;}
     if(!this.gl){this.ctx=canvas.getContext('2d');if(!this.ctx)throw new Error('Браузер не поддерживает Canvas.');}
@@ -20,7 +20,7 @@ export class Viewer {
   basis(){const {yaw:a,pitch:b}=this;return {right:[-Math.sin(a),Math.cos(a),0],up:[-Math.sin(b)*Math.cos(a),-Math.sin(b)*Math.sin(a),Math.cos(b)],eye:[Math.cos(b)*Math.cos(a),Math.cos(b)*Math.sin(a),Math.sin(b)]};}
   project(p){const b=this.basis(),q=minus(p,this.target),s=this.scale*this.zoom;return [this.width/2+this.pan[0]+dot(q,b.right)*s,this.height/2+this.pan[1]-dot(q,b.up)*s,dot(q,b.eye)];}
   resize(){const r=this.canvas.getBoundingClientRect();this.width=Math.max(1,r.width);this.height=Math.max(1,r.height);this.dpr=Math.min(devicePixelRatio||1,2);this.canvas.width=Math.round(this.width*this.dpr);this.canvas.height=Math.round(this.height*this.dpr);if(!this.scale)this.scale=1;this.invalidate();}
-  setModel(model){const first=!this.model;this.model=model;this.parts=model.parts;const ids=new Set(this.parts.map(p=>p.id));this.hidden=new Set([...this.hidden].filter(id=>ids.has(id)));if(!ids.has(this.selected))this.selected=null;if(!ids.has(this.isolated))this.isolated=null;this.transitions=null;this.prepare();if(first)this.fit();else this.invalidate();}
+  setModel(model){this.edgeCache.clear();const first=!this.model;this.model=model;this.parts=model.parts;const ids=new Set(this.parts.map(p=>p.id));this.hidden=new Set([...this.hidden].filter(id=>ids.has(id)));if(!ids.has(this.selected))this.selected=null;if(!ids.has(this.isolated))this.isolated=null;this.transitions=null;this.prepare();if(first)this.fit();else this.invalidate();}
   prepare(){if(!this.gl)return;const gl=this.gl;for(const p of this.buffers||[]){gl.deleteBuffer(p.buffer);}this.buffers=this.parts.map(p=>{const data=new Float32Array(p.mesh.length*18);let k=0;for(const t of p.mesh){const n=normal(t);for(const v of t)for(const x of [...v,...n])data[k++]=x;}const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);return {id:p.id,buffer,count:p.mesh.length*3};});}
   visible(p){if(this.isolated)return p.id===this.isolated;if(this.hidden.has(p.id))return false;if(!STAGES[this.stage](p))return false;if(p.sample)return this.reference.sample;if(p.type==='master')return this.reference.master;if(p.type==='silicone')return this.reference.silicone;if(p.type==='channels')return this.reference.channels;return p.printable;}
   shift(p,mode=this.mode){const d=this.model.d,H=this.model.p.masterHeight,e=this.explode;
@@ -59,12 +59,26 @@ export class Viewer {
   bind(){const c=this.canvas;c.addEventListener('contextmenu',e=>e.preventDefault());
     c.addEventListener('pointerdown',e=>{c.focus({preventScroll:true});c.setPointerCapture(e.pointerId);this.pointer.set(e.pointerId,[e.clientX,e.clientY]);this.drag={x:e.clientX,y:e.clientY,moved:0,pan:e.shiftKey||e.button===2};});
     c.addEventListener('pointermove',e=>{if(!this.pointer.has(e.pointerId))return;const old=this.pointer.get(e.pointerId),dx=e.clientX-old[0],dy=e.clientY-old[1];this.pointer.set(e.pointerId,[e.clientX,e.clientY]);if(this.pointer.size===2){const values=[...this.pointer.values()],dist=Math.hypot(values[0][0]-values[1][0],values[0][1]-values[1][1]);if(this.pinch)this.zoom=clamp(this.zoom*dist/this.pinch,.2,10);this.pinch=dist;}else if(this.drag?.pan){this.pan[0]+=dx;this.pan[1]+=dy;}else{this.yaw-=dx*.007;this.pitch=clamp(this.pitch+dy*.007,-1.5,1.55);}if(this.drag)this.drag.moved+=Math.abs(dx)+Math.abs(dy);this.invalidate();});
-    const release=e=>{this.pointer.delete(e.pointerId);this.pinch=null;if(e.type==='pointerup'&&this.drag&&this.drag.moved<5&&e.button!==2){const r=c.getBoundingClientRect();this.pick(e.clientX-r.left,e.clientY-r.top);}this.drag=null;};c.addEventListener('pointerup',release);c.addEventListener('pointercancel',release);
+    const release=e=>{this.pointer.delete(e.pointerId);this.pinch=null;if(e.type==='pointerup'&&this.drag&&this.drag.moved<5&&e.button!==2){const r=c.getBoundingClientRect();this.pick(e.clientX-r.left,e.clientY-r.top);}this.drag=null;};c.addEventListener('pointerup',release);c.addEventListener('pointercancel',release);c.addEventListener('lostpointercapture',()=>{this.pointer.clear();this.pinch=null;this.drag=null;});c.addEventListener('blur',()=>{this.pointer.clear();this.pinch=null;this.drag=null;});
     c.addEventListener('wheel',e=>{e.preventDefault();this.zoom=clamp(this.zoom*Math.exp(-e.deltaY*.0015),.2,12);this.invalidate();},{passive:false});
-    c.addEventListener('keydown',e=>{let acted=true;if(e.key==='ArrowLeft')this.yaw-=.13;else if(e.key==='ArrowRight')this.yaw+=.13;else if(e.key==='ArrowUp')this.pitch=clamp(this.pitch+.13,-1.5,1.55);else if(e.key==='ArrowDown')this.pitch=clamp(this.pitch-.13,-1.5,1.55);else if(['+','='].includes(e.key))this.zoom=clamp(this.zoom*1.15,.2,12);else if(e.key==='-')this.zoom=clamp(this.zoom/1.15,.2,12);else if(e.key.toLowerCase()==='f')this.fit();else if(e.key==='Escape')this.select(null);else acted=false;if(acted){e.preventDefault();this.transitions=null;this.invalidate();}});
+    c.addEventListener('keydown',e=>{let acted=true;if(e.key==='ArrowLeft')this.yaw-=.13;else if(e.key==='ArrowRight')this.yaw+=.13;else if(e.key==='ArrowUp')this.pitch=clamp(this.pitch+.13,-1.5,1.55);else if(e.key==='ArrowDown')this.pitch=clamp(this.pitch-.13,-1.5,1.55);else if(['+','='].includes(e.key))this.zoom=clamp(this.zoom*1.15,.2,12);else if(e.key==='-')this.zoom=clamp(this.zoom/1.15,.2,12);else if(e.key.toLowerCase()==='f')this.fit();else if(e.key==='Escape'){this.pointPicker=null;this.select(null);}else acted=false;if(acted){e.preventDefault();this.transitions=null;this.invalidate();}});
   }
   grid(){const lines=[],r=this.mode==='layout'?Math.max(this.model.d.so*4,400):Math.max(this.model.d.so*1.9,150),step=r>500?100:25;for(let t=-Math.floor(r/step)*step;t<=r;t+=step){lines.push([[-r,t,-3],[r,t,-3]],[[t,-r,-3],[t,r,-3]]);}return lines;}
   outline(){const p=this.parts.find(p=>p.id===this.selected);if(!p||!this.visible(p))return [];const s=this.offset(p),b=p.bounds,c=[];for(let i=0;i<8;i++)c.push([0,1,2].map(j=>(i&(1<<j)?b.max[j]:b.min[j])+s[j]));const lines=[];for(let i=0;i<8;i++)for(let j=0;j<3;j++)if(!(i&(1<<j)))lines.push([c[i],c[i|(1<<j)]]);return lines;}
+  meshEdges(){
+    const out=[];if(!this.showEdges)return out;
+    for(const p of this.parts.filter(x=>this.visible(x))){
+      if(!this.edgeCache.has(p.id)){
+        const unique=new Map();for(const t of p.mesh){for(let i=0;i<3;i++){const a=t[i],b=t[(i+1)%3],ka=a.join(','),kb=b.join(','),key=ka<kb?ka+'|'+kb:kb+'|'+ka;if(!unique.has(key))unique.set(key,[a,b]);}if(unique.size>=50000)break;}
+        this.edgeCache.set(p.id,[...unique.values()]);
+      }
+      const shift=this.offset(p);for(const edge of this.edgeCache.get(p.id)){
+        const [a,b]=edge.map(v=>add(v,shift));
+        if(this.mode==='section'){const cut=this.cutPlane();if(a[cut.axis]<cut.plane||b[cut.axis]<cut.plane)continue;}
+        out.push([a,b]);if(out.length>=50000)return out;
+      }
+    }return out;
+  }
   render(){if(!this.model||this.lost)return;this.framesDrawn++;if(this.gl)this.renderGL();else this.renderCPU();}
   renderCPU(){
     // A true per-pixel depth buffer: a painter sort cannot resolve coincident
@@ -101,7 +115,7 @@ export class Viewer {
       }
     }
     ctx.setTransform(this.dpr,0,0,this.dpr,0,0);ctx.fillStyle='#f4f5ef';ctx.fillRect(0,0,this.width,this.height);this.drawLines2D(this.grid(),'#dce1d5',.65);
-    this.cpuContext.putImageData(this.image,0,0);ctx.drawImage(this.cpuCanvas,0,0,w,h);this.drawLines2D(this.outline(),'#a34925',1.2);
+    this.cpuContext.putImageData(this.image,0,0);ctx.drawImage(this.cpuCanvas,0,0,w,h);this.drawLines2D(this.meshEdges(),'#405e55',.35);this.drawLines2D(this.outline(),'#a34925',1.2);
   }
   drawLines2D(lines,color,width){const c=this.ctx;c.strokeStyle=color;c.lineWidth=width;c.beginPath();for(const line of lines){const [a,b]=line.map(v=>this.project(v));c.moveTo(a[0],a[1]);c.lineTo(b[0],b[1]);}c.stroke();}
   setupGL(){const gl=this.gl;const shader=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;};
@@ -114,7 +128,7 @@ export class Viewer {
   linesGL(lines,color){if(!lines.length)return;const g=this.gl,data=new Float32Array(lines.flatMap(line=>line.flatMap(v=>[...v,0,0,1])));g.bindBuffer(g.ARRAY_BUFFER,this.lineBuffer);g.bufferData(g.ARRAY_BUFFER,data,g.DYNAMIC_DRAW);this.attrs();g.uniform3f(this.loc.uShift,0,0,0);g.uniform4f(this.loc.uColor,...hex(color),1);g.uniform1f(this.loc.uFlat,1);g.uniform1f(this.loc.uCut,0);g.drawArrays(g.LINES,0,data.length/6);}
   renderGL(){const g=this.gl;g.viewport(0,0,this.canvas.width,this.canvas.height);g.clearColor(...hex('#f4f5ef'),1);g.clear(g.COLOR_BUFFER_BIT|g.DEPTH_BUFFER_BIT);g.useProgram(this.program);g.uniformMatrix4fv(this.loc.uMatrix,false,this.matrix());g.depthMask(true);this.linesGL(this.grid(),'#dce1d5');
     const list=this.parts.filter(p=>this.visible(p)).sort((a,b)=>Number(this.transparent&&a.type==='shell')-Number(this.transparent&&b.type==='shell'));
-    for(const p of list){const buf=this.buffers.find(x=>x.id===p.id);g.bindBuffer(g.ARRAY_BUFFER,buf.buffer);this.attrs();g.uniform3f(this.loc.uShift,...this.offset(p));g.uniform4f(this.loc.uColor,...hex(p.color),this.transparent&&p.type==='shell'?.2:1);g.uniform1f(this.loc.uFlat,0);g.uniform1f(this.loc.uCut,this.mode==='section'?1:0);const cut=this.cutPlane();g.uniform1f(this.loc.uPlane,cut.plane);g.uniform3f(this.loc.uCutNormal,...[0,1,2].map(i=>i===cut.axis?1:0));g.depthMask(!(this.transparent&&p.type==='shell'));g.drawArrays(g.TRIANGLES,0,buf.count);}g.depthMask(false);g.disable(g.DEPTH_TEST);this.linesGL(this.outline(),'#a34925');g.enable(g.DEPTH_TEST);g.depthMask(true);
+    for(const p of list){const buf=this.buffers.find(x=>x.id===p.id);g.bindBuffer(g.ARRAY_BUFFER,buf.buffer);this.attrs();g.uniform3f(this.loc.uShift,...this.offset(p));g.uniform4f(this.loc.uColor,...hex(p.color),this.transparent&&p.type==='shell'?.2:1);g.uniform1f(this.loc.uFlat,0);g.uniform1f(this.loc.uCut,this.mode==='section'?1:0);const cut=this.cutPlane();g.uniform1f(this.loc.uPlane,cut.plane);g.uniform3f(this.loc.uCutNormal,...[0,1,2].map(i=>i===cut.axis?1:0));g.depthMask(!(this.transparent&&p.type==='shell'));g.drawArrays(g.TRIANGLES,0,buf.count);}g.depthMask(false);this.linesGL(this.meshEdges(),'#405e55');g.disable(g.DEPTH_TEST);this.linesGL(this.outline(),'#a34925');g.enable(g.DEPTH_TEST);g.depthMask(true);
   }
   snapshot(){this.render();return new Promise(resolve=>this.canvas.toBlob(resolve,'image/png'));}
   destroy(){this.ro.disconnect();if(this.frame)cancelAnimationFrame(this.frame);if(this.gl){for(const b of this.buffers||[])this.gl.deleteBuffer(b.buffer);this.gl.deleteBuffer(this.lineBuffer);this.gl.deleteProgram(this.program);}}

@@ -19,7 +19,7 @@ def load_app(page, url=None):
         source = {p.name:p.read_text() for p in (ROOT / 'src').glob('*.js')}
         page.evaluate('''async source => {
           const urls = {};
-          for (const name of ['geometry.js','stl.js','export.js','viewer.js','worker.js','stl-mode.js','app.js']) {
+          for (const name of ['resolution.js','geometry.js','stl-settings.js','stl.js','export.js','viewer.js','worker.js','stl-mode.js','app.js']) {
             let code=source[name];
             for (const [file,url] of Object.entries(urls)) code=code.replaceAll("'./"+file+"'",JSON.stringify(url));
             // A module Worker accepts its Blob URL as an absolute URL.

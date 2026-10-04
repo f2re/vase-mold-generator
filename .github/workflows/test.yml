@@ -28,6 +28,7 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8765/ >/dev/null && break; sleep 1; done
           VMG_TEST_URL=http://127.0.0.1:8765 VMG_SCREENSHOT_DIR=artifacts python tests/browser_test.py
           VMG_TEST_URL=http://127.0.0.1:8765 VMG_SCREENSHOT_DIR=artifacts python tests/browser_stl_test.py
+          VMG_TEST_URL=http://127.0.0.1:8765 VMG_SCREENSHOT_DIR=artifacts python tests/browser_audit_test.py
       - run: python scripts/build-release.py
       - uses: actions/upload-artifact@v4
         if: always()
@@ -63,4 +64,4 @@ jobs:
             echo "Релиз $TAG уже существует; не перезаписываю его."
             exit 0
           fi
-          gh release create "$TAG" --target "$GITHUB_SHA" --title "Опалубка $VERSION · STL и формы" --notes-file dist/RELEASE_NOTES.md dist/*.zip dist/*.png dist/SHA256SUMS
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Опалубка $VERSION · STL и формы" --notes-file dist/RELEASE_NOTES.md dist/*.zip dist/*.png dist/RELEASE_NOTES.md dist/SHA256SUMS

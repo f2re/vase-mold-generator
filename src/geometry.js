@@ -1,21 +1,22 @@
+import {vaseResolution} from './resolution.js';
 /* Parametric polar boundary meshes. Millimetres; Z is up.
  * Every printable part and its preview share this exact triangle array.
  * No boolean concatenation of overlapping solids is used. */
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 export const DEFAULTS = Object.freeze({
   masterOuterD:150, masterInnerD:100, masterHeight:270, masterBottom:10,
   siliconeOuter:10, siliconeInner:10, siliconeBottom:10, siliconeBridge:5,
   shellWall:3, coreWall:3, baseThickness:5, lidThickness:5,
   fitClearance:0.25, snapDeflection:0.3, siliconeDensity:1.1,
   printerX:180, printerY:180, printerZ:180, xyMargin:2, zMargin:10,
-  autoSplit:true, segments:128
+  autoSplit:true, segments:128, detail:'standard', chordTolerance:.03
 });
 export const LIMITS = {
   masterOuterD:[30,700],masterInnerD:[16,660],masterHeight:[35,800],masterBottom:[2,100],
   siliconeOuter:[3,50],siliconeInner:[5,40],siliconeBottom:[3,50],siliconeBridge:[3,25],
   shellWall:[2,8],coreWall:[2,8],baseThickness:[3,15],lidThickness:[3,12],
   fitClearance:[0.15,0.6],snapDeflection:[0.1,0.45],siliconeDensity:[0.8,1.6],
-  printerX:[80,1000],printerY:[80,1000],printerZ:[80,1000],xyMargin:[0,15],zMargin:[0,20],segments:[64,256]
+  printerX:[80,1000],printerY:[80,1000],printerZ:[80,1000],xyMargin:[0,15],zMargin:[0,20],segments:[32,2048],chordTolerance:[.005,.2]
 };
 export const GROUPS = ['Наружная опалубка','Основание','Внутренняя втулка','Верхняя плашка','Проба защёлки','Контрольные модели'];
 export const COLORS = Object.freeze({shell:'#668195',base:'#b79b72',core:'#719063',lid:'#597d59',sample:'#a89376',master:'#46a4a2',silicone:'#d997ab'});
@@ -65,6 +66,8 @@ export function validate(input={}){if(!input||typeof input!=='object'||Array.isA
   for(const [key,[min,max]]of Object.entries(LIMITS)){const v=Object.hasOwn(input,key)?input[key]:DEFAULTS[key];if(typeof v!=='number'||!Number.isFinite(v)||v<min||v>max){fields[key]=`Допустимо от ${min} до ${max}.`;errors.push(`${key}: ${fields[key]}`);}else p[key]=v;}
   if('autoSplit'in input&&typeof input.autoSplit!=='boolean'){fields.autoSplit='Нужно логическое значение.';errors.push('Некорректный параметр разбиения.');}else p.autoSplit=input.autoSplit??DEFAULTS.autoSplit;
   const fail=(key,msg)=>{fields[key]=msg;errors.push(msg);};
+  p.detail=input.detail??(Object.hasOwn(input,'segments')?'manual':'standard');
+  if(!['draft','standard','fine','custom','manual'].includes(p.detail))fail('detail','Неизвестная детализация.');
   if(p.masterInnerD>=p.masterOuterD-2)fail('masterInnerD','Внутренний диаметр должен быть минимум на 2 мм меньше наружного.');
   if(p.masterBottom+p.siliconeBottom+24>=p.masterHeight)fail('masterHeight','Недостаточно высоты для дна, силикона и соединения втулки.');
   if(p.masterInnerD/2-p.siliconeInner-p.coreWall<5)fail('siliconeInner','Для полой втулки не осталось места. Уменьшите внутренний силикон или стенку втулки.');
@@ -101,7 +104,7 @@ function splitPlate(d,p,count){if(count===1)return [plate(d,p)];
   return Array.from({length:count},(_,i)=>polarSolid(rs,[0,p.lidThickness],n,(r,z,t)=>Math.floor(t/(n/count))===i&&!(r===1&&(t%(n/4))>=n/16&&(t%(n/4))<3*n/16)));
 }
 export function generate(input={}){const v=validate(input);if(v.errors.length){const e=new Error(v.errors.join('\n'));e.fields=v.fields;throw e;}
-  const p=v.p,d=derive(p),parts=[],warn=[];const n=p.segments;
+  const p=v.p,d=derive(p),parts=[],warn=[];const resolution=vaseResolution(p),n=resolution.segments;const tessellation={...p,segments:n};
   const add=(id,label,type,mesh,position=[0,0,0],extra={})=>{mesh=translate(mesh,position);const b=bounds(mesh),printable=!['master','silicone'].includes(type)&&!id.startsWith('test-');const fit=b.size.every((x,i)=>x<=d.safe[i]+EPS);
     parts.push({id,label,type,color:COLORS[type],mesh,bounds:b,printable,sample:id.startsWith('test-'),fits:fit,filename:`${id}.stl`,...extra});};
   const sh=(d.roof-d.base)/d.shellTiers;
@@ -116,11 +119,11 @@ export function generate(input={}){const v=validate(input);if(v.errors.length){c
   for(let i=0;i<d.flatSectors;i++)add(`base-${i+1}`,d.flatSectors===1?'Основание':`Основание ${i+1}`,'base',ring(0,d.so,0,d.base,n,TAU*i/d.flatSectors,TAU/d.flatSectors),[0,0,0],{angle:TAU*(i+.5)/d.flatSectors,group:GROUPS[1],note:'Плоская опорная плита. Мастер-модель стоит настоящим дном вниз. Разъёмы герметизировать снаружи.'});
   const L=(d.plateTop-d.coreBottom-3)/d.coreTiers;
   for(let i=0;i<d.coreTiers;i++)add(`core-${i+1}`,`Втулка ${i+1} из ${d.coreTiers}`,'core',revolve(coreProfile(d,p,L,i===0,i===d.coreTiers-1),n),[0,0,d.coreBottom+3+i*L],{tier:i,group:GROUPS[2],note:i===0?'Нижняя секция с гнездом защёлок дна. Сверху внутренний соединительный поясок.':'Секция принимает поясок снизу. Верхний буртик удерживает втулку на плашке.'});
-  add('core-bottom','Глухое дно с защёлками','core',bottom(d,p),[0,0,d.coreBottom],{group:GROUPS[2],note:'Четыре упругих лепестка с заходным скосом. Сквозного отверстия нет: силикон не должен затекать внутрь.'});
+  add('core-bottom','Глухое дно с защёлками','core',bottom(d,tessellation),[0,0,d.coreBottom],{group:GROUPS[2],note:'Четыре упругих лепестка с заходным скосом. Сквозного отверстия нет: силикон не должен затекать внутрь.'});
   add('core-cap','Крышка полости втулки','core',revolve([[0,0],[d.ci-p.fitClearance,0],[d.ci-p.fitClearance,3],[d.co+3,3],[d.co+3,6],[0,6]],n),[0,0,d.plateTop-.5],{group:GROUPS[2],note:'Съёмная крышка сверху закрывает пустую полость втулки. Это не дно вазы и не силикон.'});
-  splitPlate(d,p,d.flatSectors).forEach((m,i)=>add(`plate-${i+1}`,d.flatSectors===1?'Верхняя плашка':`Верхняя плашка ${i+1}`,'lid',m,[0,0,d.roof],{angle:TAU*(i+.5)/d.flatSectors,group:GROUPS[3],note:'Широкая плашка во весь диаметр опалубки. Четыре окна: заливка через одно, остальные открытыми для воздуха. Закрепить плашку от подъёма.'}));
+  splitPlate(d,tessellation,d.flatSectors).forEach((m,i)=>add(`plate-${i+1}`,d.flatSectors===1?'Верхняя плашка':`Верхняя плашка ${i+1}`,'lid',m,[0,0,d.roof],{angle:TAU*(i+.5)/d.flatSectors,group:GROUPS[3],note:'Широкая плашка во весь диаметр опалубки. Четыре окна: заливка через одно, остальные открытыми для воздуха. Закрепить плашку от подъёма.'}));
   add('test-socket','Проба: гнездо','sample',revolve(coreProfile(d,p,18,true,true),n),[d.so+55,0,3],{group:GROUPS[4],note:'Проверка защёлки при том же диаметре и зазоре, что у рабочей втулки.'});
-  add('test-bottom','Проба: дно','sample',bottom(d,p),[d.so+55,0,0],{group:GROUPS[4],note:'Печатать вместе с пробным гнездом перед комплектом. Физическая посадка не проверена.'});
+  add('test-bottom','Проба: дно','sample',bottom(d,tessellation),[d.so+55,0,0],{group:GROUPS[4],note:'Печатать вместе с пробным гнездом перед комплектом. Физическая посадка не проверена.'});
   add('master','Мастер-модель вазы','master',revolve([[0,0],[d.ro,0],[d.ro,p.masterHeight],[d.ri,p.masterHeight],[d.ri,p.masterBottom],[0,p.masterBottom]],n),[0,0,d.base],{group:GROUPS[5],note:'Контрольная модель. Не включается в архив оснастки. Можно выгрузить отдельно.'});
   add('silicone-outer','Силикон: наружный слой','silicone',ring(d.ro,d.si,d.base,d.lip,n),[0,0,0],{group:GROUPS[5],stage:1,note:'Первая заливка вокруг вазы до уровня её кромки.'});
   add('silicone-inner','Силикон: внутри и над кромкой','silicone',revolve([[0,d.base+p.masterBottom],[d.ri,d.base+p.masterBottom],[d.ri,d.lip],[d.si,d.lip],[d.si,d.roof],[d.co,d.roof],[d.co,d.coreBottom],[0,d.coreBottom]],n),[0,0,0],{group:GROUPS[5],stage:2,note:'Вторая заливка: внутреннее дно, стенки и перемычка над кромкой. Сцепление слоёв зависит от силикона.'});
@@ -129,7 +132,7 @@ export function generate(input={}){const v=validate(input);if(v.errors.length){c
   if(p.fitClearance<=.2)warn.push('Малый зазор: обязательно проверьте пробную защёлку.');
   const outer=Math.PI*(d.si*d.si-d.ro*d.ro)*p.masterHeight/1000;
   const inner=(Math.PI*d.ri*d.ri*p.siliconeBottom+Math.PI*(d.ri*d.ri-d.co*d.co)*(p.masterHeight-p.masterBottom-p.siliconeBottom)+Math.PI*(d.si*d.si-d.co*d.co)*p.siliconeBridge)/1000;
-  return {version:VERSION,p,d,parts,warnings:warn,stats:{outerMl:outer,innerMl:inner,totalMl:outer+inner,massG:(outer+inner)*p.siliconeDensity,printCount:parts.filter(x=>x.printable).length,allFit:bad.length===0}};
+  return {version:VERSION,p,d,parts,resolution,warnings:warn,stats:{outerMl:outer,innerMl:inner,totalMl:outer+inner,massG:(outer+inner)*p.siliconeDensity,meshTotalMl:parts.filter(x=>x.type==='silicone').reduce((s,x)=>s+volume(x.mesh)/1000,0),printCount:parts.filter(x=>x.printable).length,allFit:bad.length===0}};
 }
 export function checkMesh(mesh){const edges=new Map();let degenerate=0,finite=true;const key=p=>p.map(x=>Math.round(x*1e6)).join(',');
   for(const t of mesh){if(!t.flat().every(Number.isFinite))finite=false;if(Math.hypot(...normal(t))<.5)degenerate++;for(let i=0;i<3;i++){const a=key(t[i]),b=key(t[(i+1)%3]),k=a<b?`${a}|${b}`:`${b}|${a}`,e=edges.get(k)||{n:0,w:0};e.n++;e.w+=a<b?1:-1;edges.set(k,e);}}
