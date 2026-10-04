@@ -1,0 +1,9 @@
+.agent-skills/
+.agents/skills/upstream-*/
+output/
+artifacts/
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+*.log

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f6f5ef"><meta name="description" content="Локальный генератор опалубки для цилиндрической вазы. Параметры, интерактивная 3D-сборка и экспорт STL.">
+<title>Опалубка — генератор формы для вазы</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='none' stroke='%233e6550' stroke-width='2' d='M8 9v22c0 7 24 7 24 0V9M8 9c0-7 24-7 24 0S8 16 8 9M15 10v18c0 4 10 4 10 0V10'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#workspace">К модели и управлению</a>
+<header class="app-header">
+  <a href="./" class="brand" aria-label="Опалубка — главная">
+    <svg viewBox="0 0 40 40" aria-hidden="true"><ellipse cx="20" cy="8" rx="12" ry="4.5"/><path d="M8 8v23c0 6 24 6 24 0V8M15 8v20c0 3 10 3 10 0V8"/></svg>
+    <span><strong>Опалубка</strong><small>Генератор формы для вазы</small></span>
+  </a>
+  <span class="local-state"><i></i>Расчёт в браузере <span class="version">0.2.1</span></span>
+  <nav class="project-actions" aria-label="Проект">
+    <button id="openProject" class="quiet" title="Открыть параметры JSON"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V4h6l2 3h10v13H3zM3 10h18"/></svg><span>Открыть</span></button>
+    <button id="saveProject" class="quiet" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h12l3 3v15H4V3zM8 3v6h8V3M8 21v-8h8v8"/></svg><span>Сохранить</span></button>
+    <button id="exportAll" class="primary" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/></svg><span>Скачать STL</span></button>
+  </nav><input id="projectFile" type="file" accept=".json,application/json" hidden>
+</header>
+<nav class="mobile-nav" aria-label="Разделы"><a href="#workspace">3D-модель</a><a href="#parameters">Размеры</a><a href="#inspector">Детали</a></nav>
+<main class="app-grid">
+  <aside class="parameters" id="parameters" aria-label="Размеры и оснастка">
+    <div class="panel-heading"><h2>Размеры и оснастка</h2><button id="reset" class="icon-button" title="Вернуть исходные размеры" aria-label="Вернуть исходные размеры"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 1 1 1 9M4 3v6h6"/></svg></button></div>
+    <p class="help">Меняйте размеры — детали перестроятся. Все размеры в миллиметрах.</p>
+    <form id="parameterForm" novalidate>
+      <section class="field-section"><h3>Ваза / мастер-модель</h3><div class="field-grid" id="masterFields"></div><p class="help" id="masterDerived">Вычисление размеров…</p></section>
+      <section class="field-section"><h3>Силиконовая оболочка</h3><div class="field-grid" id="siliconeFields"></div></section>
+      <details class="field-section" open><summary>Принтер и разбиение</summary>
+        <label class="select-label" for="printerPreset">Рабочая область</label><select id="printerPreset"><option value="180">Bambu Lab A1 mini · 180³</option><option value="256">Bambu Lab A1 / P1 / X1 · 256³</option><option value="custom">Свои размеры</option></select>
+        <div class="field-grid triples" id="printerFields"></div><label class="check"><input id="autoSplit" type="checkbox" checked>Разбивать под область печати</label>
+        <p class="help">Проверяется каждая деталь, включая основание и верхнюю плашку.</p>
+      </details>
+      <details class="field-section"><summary>Стенки и посадки</summary><div class="field-grid" id="toolFields"></div><p class="help">Защёлки требуют пробной печати. Зазор не равен толщине силикона.</p></details>
+      <details class="field-section"><summary>Поля и расчёт материала</summary><div class="field-grid" id="advancedFields"></div><p class="help">Расход без запаса на перемешивание, пролив и остатки. Плотность уточните у производителя силикона.</p></details>
+    </form>
+  </aside>
+  <section class="workspace" id="workspace" aria-labelledby="workspaceTitle">
+    <div class="workspace-heading"><div><h1 id="workspaceTitle">Оснастка в сборе</h1><p id="modelCaption">Ваза Ø150 / Ø100 × 270 мм</p></div><span id="generationState" role="status" aria-live="polite">Подготовка…</span></div>
+    <div id="messages" aria-live="polite"></div>
+    <div class="view-heading"><div class="segmented modes" role="group" aria-label="Вид модели"><button data-mode="assembly" aria-pressed="false">Сборка</button><button data-mode="explode" aria-pressed="true">Разнесение</button><button data-mode="section" aria-pressed="false">Разрез</button><button data-mode="layout" aria-pressed="false">Все детали</button></div><button id="helpToggle" class="text-button" aria-controls="workflow" aria-expanded="false">Как заливать</button></div>
+    <div id="preview" class="preview" aria-busy="true">
+      <canvas id="view3d" tabindex="0" role="img" aria-label="Интерактивная трёхмерная модель опалубки. Стрелки — вращать, плюс и минус — масштаб, F — вписать. Детали также доступны в списке справа."></canvas>
+      <div class="view-toolbar"><div class="segmented cameras" role="group" aria-label="Направление просмотра"><button data-camera="iso">3D</button><button data-camera="front">Спереди</button><button data-camera="top">Сверху</button><button id="fitView" title="Вписать модель (F)" aria-label="Вписать модель"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5"/></svg></button></div><div class="canvas-actions"><label class="check compact"><input type="checkbox" id="transparentShell">Прозрачный кожух</label><button id="snapshot" class="icon-button" title="Снимок текущего вида PNG" aria-label="Сохранить снимок PNG"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h5l2-3h4l2 3h5v14H3z"/><circle cx="12" cy="13" r="4"/></svg></button><button id="fullscreen" class="icon-button" title="Развернуть 3D-вид" aria-label="Развернуть 3D-вид"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button></div></div>
+      <div class="preview-overlay" id="previewOverlay">Сборка геометрии…</div>
+      <div class="view-footer"><span id="rendererState">3D</span><span>Перетащите для вращения · колесо — масштаб</span><span class="axis-labels">X Y Z</span></div>
+    </div>
+    <div class="view-adjust" id="explodeControl"><label for="explodeRange">Разнести детали</label><input id="explodeRange" type="range" min="0" max="100" step="1" value="58"><output id="explodeValue" for="explodeRange">58%</output></div>
+    <div class="view-adjust" id="sectionControl" hidden><label for="sectionRange">Плоскость разреза</label><input id="sectionRange" type="range" min="-95" max="95" value="0"><output id="sectionValue" for="sectionRange">0 мм</output></div>
+    <div class="reference-bar" role="group" aria-label="Контрольные модели"><label class="check"><input id="showMaster" type="checkbox"><i class="swatch master"></i>Мастер-модель</label><label class="check"><input id="showSilicone" type="checkbox"><i class="swatch silicone"></i>Силикон</label><label class="check"><input id="showSamples" type="checkbox">Проба защёлки</label></div>
+    <p class="view-note" id="viewNote">Разнесение меняет только просмотр. Размеры STL остаются прежними.</p>
+    <div class="summary" id="summary" aria-label="Результат расчёта"></div>
+    <div class="fit-status"><span id="fitStatus">Проверка области печати…</span><button id="regenerate" class="text-button">Пересчитать</button></div>
+    <section id="workflow" class="workflow" hidden aria-labelledby="workflowTitle"><h2 id="workflowTitle">Две заливки силикона</h2><div class="stage-buttons" role="group" aria-label="Этап изготовления"><button data-stage="all" aria-pressed="true">Вся сборка</button><button data-stage="outer" aria-pressed="false">1. Наружный слой</button><button data-stage="inner" aria-pressed="false">2. Внутренняя часть</button><button data-stage="casting" aria-pressed="false">После отверждения</button></div><p id="workflowText"></p><p class="notice">Оснастка ещё не проверена физической заливкой. Сначала проверьте пробную защёлку, стыки и совместимость силикона. Схема не моделирует течение и не гарантирует отсутствие пузырей.</p></section>
+  </section>
+  <aside class="inspector" id="inspector" aria-labelledby="partsTitle"><div class="panel-heading"><h2 id="partsTitle">Состав формы</h2><button id="showAllParts" class="text-button" title="Показать все печатные детали">Показать всё</button></div><p class="help">Нажмите на деталь в 3D или в списке. Флажок управляет видимостью.</p><div id="partsTree" class="parts-tree"></div><section id="selection" class="selection" aria-live="polite"><p class="help">Выберите деталь, чтобы увидеть размеры и сохранить её STL.</p></section><div class="sample-action"><button id="exportSamples" class="secondary" disabled>Скачать пробу защёлки</button><p class="help">Два небольших элемента для проверки посадки до печати комплекта.</p></div></aside>
+</main>
+<footer class="app-footer"><span>Цилиндрическая ваза · двухэтапная заливка</span><span>STL в миллиметрах · без отправки моделей на сервер</span></footer>
+<div id="toast" class="toast" role="status" hidden></div>
+<noscript><p>Для генерации модели требуется JavaScript. Приложение работает локально.</p></noscript>
+<script type="module" src="src/app.js"></script>
+</body></html>

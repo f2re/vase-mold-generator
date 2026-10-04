@@ -1,0 +1,33 @@
+name: Проверка генератора
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  geometry-and-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm test
+      - run: npm run example
+      - run: python scripts/install-skills.py --check
+      - run: python -m pip install playwright==1.57.0
+      - run: python -m playwright install --with-deps chromium
+      - name: Проверить настоящий HTTP-запуск
+        run: |
+          python serve.py --no-browser > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8765/ >/dev/null && break; sleep 1; done
+          VMG_TEST_URL=http://127.0.0.1:8765 VMG_SCREENSHOT_DIR=artifacts python tests/browser_test.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preview-and-checks
+          path: |
+            artifacts/
+            output/
+            server.log
