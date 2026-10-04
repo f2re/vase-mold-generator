@@ -1,10 +1,11 @@
-name: Проверка генератора
+name: Проверка и выпуск
 on: [push, pull_request]
 permissions:
   contents: read
 jobs:
-  geometry-and-ui:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -13,16 +14,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: npm test
+      - name: Локальное CAD-ядро
+        run: sudo apt-get update -qq && sudo apt-get install -y openscad
+      - run: python scripts/make-examples.py
+      - run: python scripts/check-all.py
       - run: npm run example
       - run: python scripts/install-skills.py --check
       - run: python -m pip install playwright==1.57.0
       - run: python -m playwright install --with-deps chromium
-      - name: Проверить настоящий HTTP-запуск
+      - name: Браузер через HTTP · ваза и STL
         run: |
           python serve.py --no-browser > server.log 2>&1 &
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8765/ >/dev/null && break; sleep 1; done
           VMG_TEST_URL=http://127.0.0.1:8765 VMG_SCREENSHOT_DIR=artifacts python tests/browser_test.py
+          VMG_TEST_URL=http://127.0.0.1:8765 VMG_SCREENSHOT_DIR=artifacts python tests/browser_stl_test.py
+      - run: python scripts/build-release.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -31,3 +37,30 @@ jobs:
             artifacts/
             output/
             server.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: dist/
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: dist
+      - name: Опубликовать только проверенную версию
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python -c 'import json; print(json.load(open("package.json"))["version"])')
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Релиз $TAG уже существует; не перезаписываю его."
+            exit 0
+          fi
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Опалубка $VERSION · STL и формы" --notes-file dist/RELEASE_NOTES.md dist/*.zip dist/*.png dist/SHA256SUMS

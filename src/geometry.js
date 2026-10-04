@@ -1,7 +1,7 @@
 /* Parametric polar boundary meshes. Millimetres; Z is up.
  * Every printable part and its preview share this exact triangle array.
  * No boolean concatenation of overlapping solids is used. */
-export const VERSION = '0.2.1';
+export const VERSION = '0.3.0';
 export const DEFAULTS = Object.freeze({
   masterOuterD:150, masterInnerD:100, masterHeight:270, masterBottom:10,
   siliconeOuter:10, siliconeInner:10, siliconeBottom:10, siliconeBridge:5,
@@ -118,7 +118,7 @@ export function generate(input={}){const v=validate(input);if(v.errors.length){c
   for(let i=0;i<d.coreTiers;i++)add(`core-${i+1}`,`Втулка ${i+1} из ${d.coreTiers}`,'core',revolve(coreProfile(d,p,L,i===0,i===d.coreTiers-1),n),[0,0,d.coreBottom+3+i*L],{tier:i,group:GROUPS[2],note:i===0?'Нижняя секция с гнездом защёлок дна. Сверху внутренний соединительный поясок.':'Секция принимает поясок снизу. Верхний буртик удерживает втулку на плашке.'});
   add('core-bottom','Глухое дно с защёлками','core',bottom(d,p),[0,0,d.coreBottom],{group:GROUPS[2],note:'Четыре упругих лепестка с заходным скосом. Сквозного отверстия нет: силикон не должен затекать внутрь.'});
   add('core-cap','Крышка полости втулки','core',revolve([[0,0],[d.ci-p.fitClearance,0],[d.ci-p.fitClearance,3],[d.co+3,3],[d.co+3,6],[0,6]],n),[0,0,d.plateTop-.5],{group:GROUPS[2],note:'Съёмная крышка сверху закрывает пустую полость втулки. Это не дно вазы и не силикон.'});
-  splitPlate(d,p,d.flatSectors).forEach((m,i)=>add(`plate-${i+1}`,d.flatSectors===1?'Верхняя плашка':`Верхняя плашка ${i+1}`,'lid',m,[0,0,d.roof],{angle:TAU*(i+.5)/d.flatSectors,group:GROUPS[3],note:'Широкая плашка во весь диаметр опалубки. Четыре окна: заливка через одно, остальные открыты для воздуха. Закрепить плашку от подъёма.'}));
+  splitPlate(d,p,d.flatSectors).forEach((m,i)=>add(`plate-${i+1}`,d.flatSectors===1?'Верхняя плашка':`Верхняя плашка ${i+1}`,'lid',m,[0,0,d.roof],{angle:TAU*(i+.5)/d.flatSectors,group:GROUPS[3],note:'Широкая плашка во весь диаметр опалубки. Четыре окна: заливка через одно, остальные открытыми для воздуха. Закрепить плашку от подъёма.'}));
   add('test-socket','Проба: гнездо','sample',revolve(coreProfile(d,p,18,true,true),n),[d.so+55,0,3],{group:GROUPS[4],note:'Проверка защёлки при том же диаметре и зазоре, что у рабочей втулки.'});
   add('test-bottom','Проба: дно','sample',bottom(d,p),[d.so+55,0,0],{group:GROUPS[4],note:'Печатать вместе с пробным гнездом перед комплектом. Физическая посадка не проверена.'});
   add('master','Мастер-модель вазы','master',revolve([[0,0],[d.ro,0],[d.ro,p.masterHeight],[d.ri,p.masterHeight],[d.ri,p.masterBottom],[0,p.masterBottom]],n),[0,0,d.base],{group:GROUPS[5],note:'Контрольная модель. Не включается в архив оснастки. Можно выгрузить отдельно.'});

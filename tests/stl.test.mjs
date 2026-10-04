@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {generate,bounds} from '../src/geometry.js';
+import {stl} from '../src/export.js';
+import {parseSTL,transformSTL} from '../src/stl.js';
+const master=generate().parts.find(p=>p.id==='master'),raw=stl(master);
+test('binary STL round trip has exact dimensions',()=>{const m=parseSTL(raw);assert.equal(m.length,master.mesh.length);assert.deepEqual(bounds(m).size,[150,150,270]);});
+test('binary header starting solid remains binary',()=>{const b=raw.slice();b.set(new TextEncoder().encode('solid not ASCII'));assert.equal(parseSTL(b).length,master.mesh.length);});
+test('ASCII STL strict import',()=>{const text='solid unit\n'+master.mesh.slice(0,4).map(t=>'facet normal 0 0 0\nouter loop\n'+t.map(v=>'vertex '+v.join(' ')+'\n').join('')+'endloop\nendfacet\n').join('')+'endsolid unit\n';assert.equal(parseSTL(new TextEncoder().encode(text)).length,4);});
+test('truncated and nonfinite STL rejected',()=>{assert.throws(()=>parseSTL(raw.slice(0,-1)));const b=raw.slice();new DataView(b.buffer).setFloat32(96,Infinity,true);assert.throws(()=>parseSTL(b));});
+test('units, rotation and scale affect geometry not merely caption',()=>{const m=parseSTL(raw);const out=transformSTL(m,{units:'mm',scale:.5,rx:90,ry:0,rz:0});assert.deepEqual(bounds(out).size,[75,135,75]);assert.equal(bounds(out).min[2],0);});
+test('bad scale and oversize geometry rejected',()=>{for(const scale of [0,NaN,-1,10])assert.throws(()=>transformSTL(master.mesh,{units:'mm',scale,rx:0,ry:0,rz:0}));});

@@ -2,19 +2,19 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#f6f5ef"><meta name="description" content="Локальный генератор опалубки для цилиндрической вазы. Параметры, интерактивная 3D-сборка и экспорт STL.">
-<title>Опалубка — генератор формы для вазы</title>
+<meta name="theme-color" content="#f6f5ef"><meta name="description" content="Локальный конструктор форм по STL и размерам. Опалубка, двухчастный негатив, интерактивная 3D-сборка и экспорт STL.">
+<title>Опалубка — конструктор форм</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='none' stroke='%233e6550' stroke-width='2' d='M8 9v22c0 7 24 7 24 0V9M8 9c0-7 24-7 24 0S8 16 8 9M15 10v18c0 4 10 4 10 0V10'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-source="vase">
 <a class="skip" href="#workspace">К модели и управлению</a>
 <header class="app-header">
   <a href="./" class="brand" aria-label="Опалубка — главная">
     <svg viewBox="0 0 40 40" aria-hidden="true"><ellipse cx="20" cy="8" rx="12" ry="4.5"/><path d="M8 8v23c0 6 24 6 24 0V8M15 8v20c0 3 10 3 10 0V8"/></svg>
-    <span><strong>Опалубка</strong><small>Генератор формы для вазы</small></span>
+    <span><strong>Опалубка</strong><small>Формы по STL и размерам</small></span>
   </a>
-  <span class="local-state"><i></i>Расчёт в браузере <span class="version">0.2.1</span></span>
+  <span class="local-state"><i></i>Локальный расчёт <span class="version">0.3.0</span></span>
   <nav class="project-actions" aria-label="Проект">
     <button id="openProject" class="quiet" title="Открыть параметры JSON"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V4h6l2 3h10v13H3zM3 10h18"/></svg><span>Открыть</span></button>
     <button id="saveProject" class="quiet" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h12l3 3v15H4V3zM8 3v6h8V3M8 21v-8h8v8"/></svg><span>Сохранить</span></button>
@@ -24,8 +24,33 @@
 <nav class="mobile-nav" aria-label="Разделы"><a href="#workspace">3D-модель</a><a href="#parameters">Размеры</a><a href="#inspector">Детали</a></nav>
 <main class="app-grid">
   <aside class="parameters" id="parameters" aria-label="Размеры и оснастка">
-    <div class="panel-heading"><h2>Размеры и оснастка</h2><button id="reset" class="icon-button" title="Вернуть исходные размеры" aria-label="Вернуть исходные размеры"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 1 1 1 9M4 3v6h6"/></svg></button></div>
-    <p class="help">Меняйте размеры — детали перестроятся. Все размеры в миллиметрах.</p>
+    <div class="source-switch" role="group" aria-label="Источник модели"><button data-source-mode="vase" aria-pressed="true">Ваза по размерам</button><button data-source-mode="stl" aria-pressed="false">Загрузить STL</button></div>
+    <div class="panel-heading vase-only"><h2>Размеры и оснастка</h2><button id="reset" class="icon-button" title="Вернуть исходные размеры" aria-label="Вернуть исходные размеры"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 1 1 1 9M4 3v6h6"/></svg></button></div>
+    <p class="help vase-only">Меняйте размеры — детали перестроятся. Все размеры в миллиметрах.</p>
+    <section id="stlPanel" hidden aria-label="Форма по загруженному STL">
+      <h2>Форма по STL</h2><p class="help">Любая геометрия в пределах поддержки. Модель остаётся на вашем компьютере.</p>
+      <div id="stlDrop" class="stl-drop"><button id="chooseSTL" type="button" class="secondary">Выбрать STL</button><span>или перетащите файл сюда</span><small>ASCII / binary · до 15 МиБ · 100 000 граней</small></div>
+      <input id="stlFile" type="file" accept=".stl" hidden>
+      <div class="example-row"><span>Примеры:</span><button data-stl-example="medallion">Жетон</button><button data-stl-example="capsule">Капсула</button><button data-stl-example="ring">Кольцо</button></div>
+      <div class="source-file"><strong id="stlFileName">Файл не выбран</strong><span id="stlDimensions">Сначала проверьте единицы STL</span><small id="stlFacets"></small></div>
+      <div class="stl-build"><button id="buildSTL" class="primary" disabled>Построить форму</button><button id="cancelSTL" class="secondary" hidden>Отменить</button></div>
+      <progress id="stlProgress" max="100" value="0" hidden aria-label="Прогресс CAD-расчёта"></progress>
+      <form id="stlForm" novalidate>
+        <section class="field-section"><label class="select-label" for="stl-kind">Что изготовить</label><select id="stl-kind"><option value="box">Опалубка для силикона</option><option value="negative">Жёсткий негатив · 2 половины</option></select><p id="stl-input-hint" class="help">Опалубка окружает мастер-модель. Негатив — две печатные детали с вырезанной полостью.</p></section>
+        <details class="field-section" open><summary>Размер и ориентация STL</summary><label class="select-label" for="stl-units">Единицы исходного файла</label><select id="stl-units"><option value="mm">Миллиметры</option><option value="cm">Сантиметры</option><option value="inch">Дюймы</option></select><div id="stlTransform" class="field-grid spaced"></div><p class="help">STL не хранит единицы. Повороты X → Y → Z; центрирование по XY, нижняя точка на Z = 0.</p></details>
+        <section id="stlBoxOptions" class="field-section"><h3>Опалубка</h3><label class="select-label" for="stl-footprint">Контур в плане</label><select id="stl-footprint"><option value="hull">Выпуклый контур STL</option><option value="rectangle">Прямоугольник</option></select><div class="field-grid spaced" id="stlBoxFields"></div><p class="help">Мастер касается основания. Под его опорной поверхностью силикон не формируется.</p></section>
+        <section id="stlNegativeOptions" hidden class="field-section"><h3>Разъём и каналы</h3><label class="select-label" for="stl-splitAxis">Ось разъёма</label><select id="stl-splitAxis"><option value="x">X · левая / правая</option><option value="y">Y · передняя / задняя</option><option value="z">Z · нижняя / верхняя</option></select><div class="field-grid spaced" id="stlNegativeFields"></div>
+          <div class="channel-actions"><button id="pickSprue" type="button" class="secondary">Указать литник в 3D</button><button id="autoSprue" type="button" class="text-button">Авто</button></div>
+          <div class="field-grid"><div class="field"><label for="stlSprueX">Литник X, мм</label><input id="stlSprueX" type="number" step=".1" placeholder="Авто" aria-describedby="stl-input-hint"></div><div class="field"><label for="stlSprueY">Литник Y, мм</label><input id="stlSprueY" type="number" step=".1" placeholder="Авто" aria-describedby="stl-input-hint"></div></div>
+          <button id="pickVent" type="button" class="text-button">Добавить отдушину в 3D</button><div id="stlVents"></div><p class="help">Все каналы направлены вверх по Z. Авто-литник входит в верхнюю грань; остальные воздушные карманы требуют отдушин.</p>
+          <details><summary>Установочные штифты</summary><div id="stlKeyFields" class="field-grid spaced"></div></details>
+        </section>
+        <details class="field-section"><summary>Область печати</summary><div id="stlPrinterFields" class="field-grid triples"></div><p class="help">Боковые поля 2 мм, верхнее — 5 мм. Опалубка делится по высоте; большие основания и половины негатива не дробятся автоматически.</p></details>
+      </form>
+      <label id="stlRiskLabel" class="check risk-check" hidden><input id="stlRisk" type="checkbox">Проверю извлечение и поднутрения перед печатью негатива</label>
+
+      <p id="stlMessage" class="stl-message" role="status" aria-live="polite">Загрузите STL или откройте пример.</p><p id="stlEngine" class="help">Проверка локального OpenSCAD…</p>
+    </section>
     <form id="parameterForm" novalidate>
       <section class="field-section"><h3>Ваза / мастер-модель</h3><div class="field-grid" id="masterFields"></div><p class="help" id="masterDerived">Вычисление размеров…</p></section>
       <section class="field-section"><h3>Силиконовая оболочка</h3><div class="field-grid" id="siliconeFields"></div></section>
@@ -50,15 +75,16 @@
     </div>
     <div class="view-adjust" id="explodeControl"><label for="explodeRange">Разнести детали</label><input id="explodeRange" type="range" min="0" max="100" step="1" value="58"><output id="explodeValue" for="explodeRange">58%</output></div>
     <div class="view-adjust" id="sectionControl" hidden><label for="sectionRange">Плоскость разреза</label><input id="sectionRange" type="range" min="-95" max="95" value="0"><output id="sectionValue" for="sectionRange">0 мм</output></div>
-    <div class="reference-bar" role="group" aria-label="Контрольные модели"><label class="check"><input id="showMaster" type="checkbox"><i class="swatch master"></i>Мастер-модель</label><label class="check"><input id="showSilicone" type="checkbox"><i class="swatch silicone"></i>Силикон</label><label class="check"><input id="showSamples" type="checkbox">Проба защёлки</label></div>
+    <div class="reference-bar" role="group" aria-label="Контрольные модели"><label class="check"><input id="showMaster" type="checkbox"><i class="swatch master"></i>Мастер-модель</label><label class="check"><input id="showSilicone" type="checkbox"><i class="swatch silicone"></i>Силикон</label><label class="check vase-only"><input id="showSamples" type="checkbox">Проба защёлки</label><label class="check stl-only"><input id="showChannels" type="checkbox" checked>Литник и отдушины</label></div>
     <p class="view-note" id="viewNote">Разнесение меняет только просмотр. Размеры STL остаются прежними.</p>
     <div class="summary" id="summary" aria-label="Результат расчёта"></div>
     <div class="fit-status"><span id="fitStatus">Проверка области печати…</span><button id="regenerate" class="text-button">Пересчитать</button></div>
-    <section id="workflow" class="workflow" hidden aria-labelledby="workflowTitle"><h2 id="workflowTitle">Две заливки силикона</h2><div class="stage-buttons" role="group" aria-label="Этап изготовления"><button data-stage="all" aria-pressed="true">Вся сборка</button><button data-stage="outer" aria-pressed="false">1. Наружный слой</button><button data-stage="inner" aria-pressed="false">2. Внутренняя часть</button><button data-stage="casting" aria-pressed="false">После отверждения</button></div><p id="workflowText"></p><p class="notice">Оснастка ещё не проверена физической заливкой. Сначала проверьте пробную защёлку, стыки и совместимость силикона. Схема не моделирует течение и не гарантирует отсутствие пузырей.</p></section>
+    <details id="stlNotes" class="stl-only engineering-notes"><summary>Технология и ограничения</summary><div id="stlNotesText"></div></details>
+    <section id="workflow" class="workflow" hidden aria-labelledby="workflowTitle"><h2 id="workflowTitle">Две заливки силикона</h2><div class="stage-buttons vase-only" role="group" aria-label="Этап изготовления"><button data-stage="all" aria-pressed="true">Вся сборка</button><button data-stage="outer" aria-pressed="false">1. Наружный слой</button><button data-stage="inner" aria-pressed="false">2. Внутренняя часть</button><button data-stage="casting" aria-pressed="false">После отверждения</button></div><p id="workflowText"></p><p class="notice">Оснастка ещё не проверена физической заливкой. Сначала проверьте пробную защёлку, стыки и совместимость силикона. Схема не моделирует течение и не гарантирует отсутствие пузырей.</p></section>
   </section>
-  <aside class="inspector" id="inspector" aria-labelledby="partsTitle"><div class="panel-heading"><h2 id="partsTitle">Состав формы</h2><button id="showAllParts" class="text-button" title="Показать все печатные детали">Показать всё</button></div><p class="help">Нажмите на деталь в 3D или в списке. Флажок управляет видимостью.</p><div id="partsTree" class="parts-tree"></div><section id="selection" class="selection" aria-live="polite"><p class="help">Выберите деталь, чтобы увидеть размеры и сохранить её STL.</p></section><div class="sample-action"><button id="exportSamples" class="secondary" disabled>Скачать пробу защёлки</button><p class="help">Два небольших элемента для проверки посадки до печати комплекта.</p></div></aside>
+  <aside class="inspector" id="inspector" aria-labelledby="partsTitle"><div class="panel-heading"><h2 id="partsTitle">Состав формы</h2><button id="showAllParts" class="text-button" title="Показать все печатные детали">Показать всё</button></div><p class="help">Нажмите на деталь в 3D или в списке. Флажок управляет видимостью.</p><div id="partsTree" class="parts-tree"></div><section id="selection" class="selection" aria-live="polite"><p class="help">Выберите деталь, чтобы увидеть размеры и сохранить её STL.</p></section><div class="sample-action vase-only"><button id="exportSamples" class="secondary" disabled>Скачать пробу защёлки</button><p class="help">Два небольших элемента для проверки посадки до печати комплекта.</p></div></aside>
 </main>
-<footer class="app-footer"><span>Цилиндрическая ваза · двухэтапная заливка</span><span>STL в миллиметрах · без отправки моделей на сервер</span></footer>
+<footer class="app-footer"><span>Параметрическая ваза · STL-опалубка · двухчастный негатив</span><span>STL в миллиметрах · без облака</span></footer>
 <div id="toast" class="toast" role="status" hidden></div>
 <noscript><p>Для генерации модели требуется JavaScript. Приложение работает локально.</p></noscript>
 <script type="module" src="src/app.js"></script>

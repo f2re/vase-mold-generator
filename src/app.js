@@ -1,6 +1,7 @@
 import {DEFAULTS, LIMITS, GROUPS, validate, generate, projectJSON, parseProject} from './geometry.js';
 import {Viewer} from './viewer.js';
 import {stl, kit} from './export.js';
+import {STLController} from './stl-mode.js';
 
 const $ = id => document.getElementById(id);
 const number = (v, digits = 1) => new Intl.NumberFormat('ru-RU', {maximumFractionDigits: digits}).format(v);
@@ -28,13 +29,14 @@ for (const [target, entries] of Object.entries(fields)) {
 }
 let model = null, ready = false, revision = 0, debounce, watchdog, worker = null, milliseconds = 0, toastTimer;
 let viewer;
+let sourceMode='vase',stlMode;
 try {
   viewer = new Viewer($('view3d'), {onSelect: () => {renderParts(); renderSelection();}, onMode: syncView});
   $('rendererState').textContent = viewer.backend;
 } catch (error) {
   $('previewOverlay').textContent = `3D-просмотр недоступен: ${error.message}. Расчёт и STL работают через список деталей.`;
   // Preserve generation and export on browsers with no graphics context.
-  viewer = {backend:'Недоступен', parts:[], reference:{master:false,silicone:false,sample:false}, hidden:new Set(), selected:null, isolated:null, mode:'explode', stage:'all', explode:.58, slice:0,
+  viewer = {backend:'Недоступен', parts:[], reference:{master:false,silicone:false,sample:false,channels:true}, hidden:new Set(), selected:null, isolated:null, mode:'explode', stage:'all', explode:.58, slice:0,
     setModel(m){this.parts=m.parts;}, visible(p){return !this.hidden.has(p.id);}, fit(){}, invalidate(){}, setMode(m){this.mode=m;syncView();}, setStage(s){this.stage=s;},
     setVisible(id,v){v?this.hidden.delete(id):this.hidden.add(id);}, setReference(k,v){this.reference[k]=v;}, select(id){this.selected=id;renderParts();renderSelection();},
     isolate(id){this.isolated=id;}, showAll(){this.hidden.clear();this.isolated=null;}, camera(){}, destroy(){}, async snapshot(){throw new Error('Снимок недоступен без Canvas.');}};
@@ -68,12 +70,13 @@ function message(text, error = false) {
 function gate(value) {
   ready = value;
   $('saveProject').disabled = !value;
-  $('exportAll').disabled = !value || !model?.stats.allFit;
+  $('exportAll').disabled = !value || !model?.stats.allFit || (sourceMode==='stl'&&!stlMode?.exportAllowed());
   $('exportSamples').disabled = !value;
   $('preview').setAttribute('aria-busy', String(!value));
   renderSelection();
 }
 function schedule(immediate = false) {
+  if(sourceMode!=='vase')return;
   const id = ++revision; clearTimeout(debounce); clearTimeout(watchdog); gate(false);
   const parameters = readInputs(), result = validate(parameters);
   clearErrors(result.fields); $('messages').replaceChildren();
@@ -112,6 +115,7 @@ function accept(result) {
   }
   model = result.model; milliseconds = result.ms;
   viewer.setModel(model); viewer.fit(); gate(true); syncView(); renderParts(); renderSelection();
+  if(model.kind==='stl'){renderSTLOutcome();return;}
   $('generationState').textContent = `Обновлено · ${number(milliseconds, 0)} мс`; $('generationState').className = '';
   $('modelCaption').textContent = `Ваза Ø${number(model.p.masterOuterD)} / Ø${number(model.p.masterInnerD)} × ${number(model.p.masterHeight)} мм`;
   $('masterDerived').textContent = `Стенка вазы ${number((model.p.masterOuterD-model.p.masterInnerD)/2)} мм; глубина ${number(model.p.masterHeight-model.p.masterBottom)} мм.`;
@@ -136,6 +140,7 @@ function ensureVisible(part) {
   if (part.type === 'master') viewer.setReference('master',true);
   if (part.type === 'silicone') viewer.setReference('silicone',true);
   if (part.sample) viewer.setReference('sample',true);
+  if(part.type==='channels')viewer.setReference('channels',true);
   viewer.setVisible(part.id,true); syncView();
 }
 function renderParts() {
@@ -143,7 +148,7 @@ function renderParts() {
   const focus = document.activeElement?.dataset?.partId;
   const focusCheck = document.activeElement?.dataset?.checkId;
   $('partsTree').replaceChildren();
-  for (const group of GROUPS) {
+  for (const group of (model.kind==='stl'?[...new Set(model.parts.map(p=>p.group))]:GROUPS)) {
     const parts = model.parts.filter(p=>p.group===group); if (!parts.length) continue;
     const section=document.createElement('section');section.className='part-group';
     const heading=document.createElement('h3');heading.textContent=group;
@@ -174,7 +179,7 @@ function renderSelection() {
   const actions=document.createElement('div');actions.className='selection-actions';
   const isolate=document.createElement('button');isolate.className='secondary';isolate.textContent=viewer.isolated===part.id?'Вся сборка':'Только эта';
   isolate.onclick=()=>{if(viewer.isolated===part.id)viewer.showAll();else viewer.isolate(part.id);renderParts();renderSelection();};
-  const download=document.createElement('button');download.id='exportPart';download.className='secondary';download.textContent='STL детали';download.disabled=!ready;
+  const download=document.createElement('button');download.id='exportPart';download.className='secondary';download.textContent='STL детали';download.disabled=!ready||(sourceMode==='stl'&&part.printable&&!stlMode?.exportAllowed());
   download.onclick=()=>{if(!ready)return;if(!part.fits)toast('Деталь не помещается в заданную область. Проверьте размер перед печатью.');saveBytes(stl(part),part.filename,'model/stl');};
   actions.append(isolate,download);target.append(heading,dim,note,actions);
 }
@@ -191,7 +196,8 @@ function syncView() {
   $('explodeControl').hidden=viewer.mode!=='explode';$('sectionControl').hidden=viewer.mode!=='section';
   $('workspaceTitle').textContent=viewTexts[viewer.mode][0];$('viewNote').textContent=viewTexts[viewer.mode][1];
   $('showMaster').checked=viewer.reference.master;$('showSilicone').checked=viewer.reference.silicone;$('showSamples').checked=viewer.reference.sample;
-  $('sectionValue').textContent=`${number((model?.d.so||0)*viewer.slice)} мм`;
+  $('sectionValue').textContent=`${number(model? (viewer.cutPlane?.().plane??model.d.so*viewer.slice):0)} мм`;
+  if($('showChannels'))$('showChannels').checked=viewer.reference.channels??true;
 }
 const stageTexts={
   all:'Ваза стоит отверстием вверх. Снаружи — разъёмная опалубка, внутри — полая втулка с глухим защёлкивающимся дном. Широкая верхняя плашка удерживает втулку; четыре окна оставлены для заливки и воздуха.',
@@ -204,7 +210,7 @@ $('parameterForm').addEventListener('submit',event=>event.preventDefault());
 $('parameterForm').addEventListener('input',event=>{if(event.target.id==='printerPreset')return;if(event.target.id.startsWith('printer'))$('printerPreset').value='custom';schedule();});
 $('printerPreset').addEventListener('change',()=>{if($('printerPreset').value!=='custom'){for(const key of ['printerX','printerY','printerZ'])$(key).value=$('printerPreset').value;schedule();}});
 $('reset').onclick=()=>{setInputs(DEFAULTS);schedule(true);toast('Восстановлены размеры Ø150 / Ø100 × 270 мм.');};
-$('regenerate').onclick=()=>schedule(true);
+$('regenerate').onclick=()=>sourceMode==='stl'?stlMode.build():schedule(true);
 document.querySelectorAll('[data-mode]').forEach(button=>button.onclick=event=>{viewer.setMode(button.dataset.mode,{animate:event.detail!==0});syncView();renderParts();});
 document.querySelectorAll('[data-camera]').forEach(button=>button.onclick=()=>viewer.camera(button.dataset.camera));
 $('fitView').onclick=()=>viewer.fit();
@@ -212,6 +218,7 @@ $('explodeRange').oninput=()=>{viewer.explode=+$('explodeRange').value/100;viewe
 $('explodeRange').onchange=()=>viewer.fit();
 $('sectionRange').oninput=()=>{viewer.slice=+$('sectionRange').value/100;syncView();viewer.invalidate();};
 for(const [id,key]of [['showMaster','master'],['showSilicone','silicone'],['showSamples','sample']])$(id).onchange=()=>{viewer.setReference(key,$(id).checked);renderParts();renderSelection();};
+$('showChannels').onchange=()=>{viewer.setReference('channels',$('showChannels').checked);renderParts();};
 $('transparentShell').onchange=()=>{viewer.transparent=$('transparentShell').checked;viewer.invalidate();};
 $('showAllParts').onclick=()=>{viewer.setStage('all');viewer.showAll();syncView();renderParts();renderSelection();};
 $('helpToggle').onclick=()=>{const show=$('workflow').hidden;$('workflow').hidden=!show;$('helpToggle').setAttribute('aria-expanded',String(show));if(show)$('workflow').scrollIntoView({block:'nearest'});};
@@ -219,16 +226,51 @@ document.querySelectorAll('[data-stage]').forEach(button=>button.onclick=()=>{vi
 function saveBytes(data,name,type='application/octet-stream') {
   const blob=data instanceof Blob?data:new Blob([data],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.hidden=true;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);
 }
-$('exportAll').onclick=()=>{if(!ready)return;try{saveBytes(kit(model),`opalubka_${model.p.masterOuterD}x${model.p.masterInnerD}x${model.p.masterHeight}_STL.zip`,'application/zip');toast(`${model.stats.printCount} деталей, параметры и сборочный манифест сохранены в ZIP.`);}catch(error){toast(error.message);}};
+$('exportAll').onclick=()=>{if(!ready||(sourceMode==='stl'&&!stlMode.exportAllowed()))return;try{saveBytes(kit(model),model.kind==='stl'?`mold_${model.mode}_STL.zip`:`opalubka_${model.p.masterOuterD}x${model.p.masterInnerD}x${model.p.masterHeight}_STL.zip`,'application/zip');toast(`${model.stats.printCount} деталей, параметры и сборочный манифест сохранены в ZIP.`);}catch(error){toast(error.message);}};
 $('exportSamples').onclick=()=>{if(!ready)return;try{saveBytes(kit(model,{samples:true}),'snap_test_STL.zip','application/zip');}catch(error){toast(error.message);}};
-$('saveProject').onclick=()=>{if(ready)saveBytes(JSON.stringify(projectJSON(model.p),null,2),'vase-mold-project.json','application/json');};
+$('saveProject').onclick=()=>{if(ready)saveBytes(JSON.stringify(sourceMode==='stl'?stlMode.project():projectJSON(model.p),null,2),sourceMode==='stl'?'stl-mold-project.json':'vase-mold-project.json','application/json');};
 $('openProject').onclick=()=>$('projectFile').click();
-$('projectFile').onchange=async()=>{const file=$('projectFile').files[0];if(!file)return;try{if(file.size>100000)throw new Error('Файл больше 100 КБ. Нужен JSON параметров, не STL.');const p=parseProject(await file.text());setInputs(p);schedule(true);toast('Размеры проекта загружены.');}catch(error){toast(error.message);}finally{$('projectFile').value='';}};
+$('projectFile').onchange=async()=>{const file=$('projectFile').files[0];if(!file)return;try{
+  if(file.size>22*1024*1024)throw new Error('Файл проекта больше 22 МиБ.');const text=await file.text(),raw=JSON.parse(text);
+  if(raw?.format==='vase-mold-generator-stl'){switchSource('stl');await stlMode.openProject(raw);}else{const p=parseProject(text);switchSource('vase');setInputs(p);schedule(true);}toast('Проект загружен.');
+}catch(error){toast(error.message);}finally{$('projectFile').value='';}};
 $('snapshot').onclick=async()=>{try{const blob=await viewer.snapshot();if(!blob)throw new Error('Не удалось получить снимок.');saveBytes(blob,'vase-mold-preview.png','image/png');}catch(error){toast(error.message);}};
 $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if($('preview').requestFullscreen)await $('preview').requestFullscreen();else toast('Полноэкранный режим недоступен в этом браузере.');}catch{toast('Браузер не разрешил полноэкранный режим.');}};
 let stored=null;
 try{stored=localStorage.getItem('vmg-project-v2');}catch{/* Storage may be denied in a private window. */}
 if(stored)try{setInputs(parseProject(stored));}catch{toast('Сохранённые параметры повреждены. Загружены исходные размеры.');}
-Object.defineProperty(window,'vmg',{value:Object.freeze({get model(){return model;},get ready(){return ready;},get revision(){return revision;},get milliseconds(){return milliseconds;},viewer})});
-window.addEventListener('beforeunload',()=>{worker?.terminate();viewer.destroy();});
+Object.defineProperty(window,'vmg',{value:Object.freeze({get model(){return model;},get ready(){return ready;},get revision(){return revision;},get milliseconds(){return milliseconds;},get sourceMode(){return sourceMode;},get stl(){return stlMode;},viewer})});
+function renderSTLOutcome(){
+  $('generationState').textContent=`Построено · ${number(model.elapsedMs/1000,1)} с`;$('generationState').className='';
+  const master=model.parts.find(p=>p.id==='master');
+  $('modelCaption').textContent=`${model.sourceName||'STL'} · ${master.bounds.size.map(x=>number(x,1)).join(' × ')} мм`;
+  $('messages').replaceChildren();model.warnings.forEach(text=>message(text));
+  $('stlNotesText').replaceChildren();for(const text of model.notes||[]){const p=document.createElement('p');p.textContent=text;$('stlNotesText').append(p);}
+  $('summary').replaceChildren();
+  const items=[['Рабочих деталей',`${model.stats.printCount} шт.`],['Тип формы',model.mode==='box'?'Опалубка':'Негатив'],['Силикон без запаса',model.stats.totalMl==null?'—':`${number(model.stats.totalMl/1000,3)} л`],['Грани STL',number(model.source.triangles,0)]];
+  for(const [label,value]of items){const div=document.createElement('div'),small=document.createElement('small'),strong=document.createElement('strong');small.textContent=label;strong.textContent=value;div.append(small,strong);$('summary').append(div);}
+  $('fitStatus').textContent=model.stats.allFit?'Рабочие детали помещаются в заданную область':'Есть детали за пределами области. Комплект заблокирован.';
+  if(model.mode==='negative'&&!$('stlRisk').checked)$('fitStatus').textContent+=' Подтвердите проверку извлечения слева.';
+  $('fitStatus').className=model.stats.allFit?'':'not-fit';
+  $('workflowTitle').textContent=model.mode==='box'?'Опалубка по STL':'Двухчастный негатив';
+  $('workflowText').textContent=model.mode==='box'?'Мастер лежит на основании. Кожух окружает его выпуклый контур или прямоугольник с заданным отступом. Соберите стенки, загерметизируйте швы и зафиксируйте мастер. Силикон заливается сверху. Закрытые внутренние полости и путь воздуха требуют отдельной проверки.':'Полость вычтена из STL. Разъём задан пользователем; четыре штифта совмещают половины. Литник и отдушины идут вверх по Z и входят в поверхность модели. До печати проверьте извлечение, особенно у петель, полостей и выступов. Это жёсткая печатная форма, а не автоматически спроектированная силиконовая система.';
+}
+function switchSource(mode){
+  if(mode===sourceMode&&stlMode)return;
+  sourceMode=mode;document.body.dataset.source=mode;clearTimeout(debounce);clearTimeout(watchdog);revision++;gate(false);
+  document.querySelectorAll('[data-source-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.sourceMode===mode)));
+  $('parameterForm').hidden=mode!=='vase';$('stlPanel').hidden=mode!=='stl';$('workflow').hidden=true;$('helpToggle').setAttribute('aria-expanded','false');
+  viewer.isolated=null;viewer.hidden.clear();viewer.stage='all';
+  if(mode==='stl'){stlMode.activate();}else{stlMode.suspend();viewer.reference.master=false;viewer.reference.silicone=false;viewer.reference.sample=false;$('workflowTitle').textContent='Две заливки силикона';$('workflowText').textContent=stageTexts.all;schedule(true);}
+}
+stlMode=new STLController({viewer,
+  onProgress(text){if(sourceMode==='stl')$('generationState').textContent=text;},
+  onDirty(){if(sourceMode!=='stl')return;revision++;gate(false);$('preview').setAttribute('aria-busy','false');$('generationState').textContent='Нужен пересчёт';},
+  onPreview(m){if(sourceMode!=='stl')return;model=m;viewer.reference.master=true;viewer.reference.silicone=false;viewer.reference.channels=true;viewer.isolated=null;viewer.setModel(m);viewer.fit();gate(false);$('preview').setAttribute('aria-busy','false');$('messages').replaceChildren();$('summary').replaceChildren();$('fitStatus').textContent='Предпросмотр STL. Оснастка ещё не построена.';$('modelCaption').textContent=stlMode.name;renderParts();renderSelection();syncView();},
+  onEmpty(){model=null;ready=false;viewer.parts=[];viewer.model=null;viewer.canvas?.getContext('2d')?.clearRect(0,0,viewer.canvas.width,viewer.canvas.height);$('partsTree').replaceChildren();$('summary').replaceChildren();$('messages').replaceChildren();$('previewOverlay').textContent='Загрузите STL слева или откройте пример. Модель появится здесь.';$('preview').setAttribute('aria-busy','true');$('generationState').textContent='Нет STL';$('modelCaption').textContent='Опалубка или негатив по вашей модели';$('fitStatus').textContent='Файл ещё не выбран.';},
+  onModel(m){viewer.reference.master=m.mode==='box';viewer.reference.silicone=false;viewer.reference.channels=m.mode==='negative';viewer.isolated=null;accept({id:revision,model:m,ms:m.elapsedMs});},
+  onRisk(){gate(ready);if(model?.kind==='stl'&&model.source)renderSTLOutcome();}
+});
+document.querySelectorAll('[data-source-mode]').forEach(b=>b.onclick=()=>switchSource(b.dataset.sourceMode));
+window.addEventListener('beforeunload',()=>{worker?.terminate();stlMode.cancel(false);viewer.destroy();});
 schedule(true);

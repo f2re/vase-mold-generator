@@ -1,1 +1,1 @@
-{"name":"vase-mold-generator","version":"0.2.1","private":true,"type":"module","description":"Локальный генератор опалубки и интерактивный 3D-просмотр","license":"MIT","scripts":{"test":"node --test tests/*.test.mjs","example":"node scripts/example.mjs"},"engines":{"node":">=18"}}
+{"name":"vase-mold-generator","version":"0.3.0","private":true,"type":"module","description":"Локальный генератор опалубки и интерактивный 3D-просмотр","license":"MIT","scripts":{"test":"node --test tests/*.test.mjs","example":"node scripts/example.mjs"},"engines":{"node":">=18"}}
